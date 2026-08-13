@@ -87,6 +87,30 @@ class OriginalSkillLibraryServiceTest {
                 .hasMessageContaining("Only .md files");
     }
 
+    @Test
+    void rejectsVariationGenerationWhenLlmReturnsNoDrafts() {
+        OriginalSkillLibraryService service = service("");
+        MockMultipartFile upload = new MockMultipartFile(
+                "files",
+                "code-review.md",
+                "text/markdown",
+                "# Code Review\n\nReview code.".getBytes(StandardCharsets.UTF_8)
+        );
+        String originalId = service.upload(List.of(upload)).get(0).originalId();
+
+        assertThatThrownBy(() -> service.generateVariations(originalId, new GenerateVariationsRequest(
+                1,
+                "security",
+                0.7,
+                "English",
+                "moderate",
+                "",
+                true
+        )))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("AI variation generation required");
+    }
+
     private OriginalSkillLibraryService service(String response) {
         SkillManagerProperties properties = new SkillManagerProperties(
                 "http://localhost:8025",

@@ -1,10 +1,12 @@
 package local.codex.skills.manager.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Optional;
 
 import local.codex.skills.manager.SkillManagerProperties;
 import local.codex.skills.manager.model.CreateSkillRequest;
@@ -59,5 +61,42 @@ class SkillRepositoryTest {
                 .extracting(GeneratedSkill::skillId)
                 .containsExactly(created.skillId());
         assertThat(repository.findAll()).isEmpty();
+    }
+
+    @Test
+    void rejectsSkillCreationWhenAiGeneratorReturnsNoCompleteArtifacts() {
+        SkillRepository repository = new SkillRepository(new SkillManagerProperties(
+                "http://localhost:8025",
+                "9301",
+                tempDir,
+                tempDir.resolve("skills"),
+                3600,
+                1000,
+                false,
+                60000,
+                "http://localhost:8080",
+                "http://localhost:5173"
+        ), new EmptyAiSkillGeneratorService());
+
+        assertThatThrownBy(() -> repository.create(new CreateSkillRequest(
+                "msg_ai_required",
+                "ai_required",
+                "Create a probe skill that must come from AI.",
+                null,
+                120L
+        )))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AI skill generation required");
+    }
+
+    private static final class EmptyAiSkillGeneratorService extends AiSkillGeneratorService {
+        private EmptyAiSkillGeneratorService() {
+            super(null, null);
+        }
+
+        @Override
+        public Optional<GeneratedSkillContent> generate(GenerationRequest request) {
+            return Optional.empty();
+        }
     }
 }

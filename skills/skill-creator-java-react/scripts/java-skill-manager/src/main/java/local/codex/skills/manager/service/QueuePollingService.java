@@ -1,6 +1,7 @@
 package local.codex.skills.manager.service;
 
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,6 +23,7 @@ public class QueuePollingService {
     private static final Pattern TTL_SECONDS = Pattern.compile("(?im)^\\s*-?\\s*(?:TTL Seconds|ttl_seconds|extend_seconds|seconds)\\s*:\\s*(\\d+)\\s*$");
     private static final Pattern PROMPT_TITLE = Pattern.compile("(?im)^\\s*#\\s*Prompt\\s*:\\s*(.+?)\\s*$");
     private static final Pattern SKILL_NAME = Pattern.compile("(?im)^\\s*-?\\s*(?:Skill Name|skill_name|name)\\s*:\\s*`?\"?([^`\"\\r\\n]+)\"?`?\\s*$");
+    private static final Pattern VERDICT_STATUS = Pattern.compile("(?im)^\\s*STATUS\\s*:\\s*(PASS|FAIL)\\s*$");
 
     private final QueueClient queueClient;
     private final SkillRepository repository;
@@ -77,8 +79,8 @@ public class QueuePollingService {
         }
 
         String text = message.text();
-        String upper = text.toUpperCase();
-        if (upper.contains("STATUS: PASS")) {
+        Optional<String> verdict = verdictStatus(text);
+        if (verdict.filter("PASS"::equals).isPresent()) {
             try {
                 GitPublishService.PublishResult publish = gitPublishService.publishValidatedSkill(
                         firstGroup(SKILL_ID, text).orElse("unknown_skill"),
@@ -90,9 +92,10 @@ public class QueuePollingService {
                 return update("VALIDATION_PASS_PUBLISH_FAILED", "Validator PASS received; git publish failed: " + e.getMessage(), message.envelopeId().orElse(null), response.statusCode());
             }
         }
-        if (upper.contains("STATUS: FAIL")) {
+        if (verdict.filter("FAIL"::equals).isPresent()) {
             return update("VALIDATION_FAIL", "Validator FAIL received; manual code changes may be required.", message.envelopeId().orElse(null), response.statusCode());
         }
+        String upper = text.toUpperCase(Locale.ROOT);
         if (upper.contains("ACTION: EXTEND_TTL")) {
             GeneratedSkill skill = extendTtl(text);
             QueueClient.QueueResponse submit = validationReportService.submitReport(
@@ -191,6 +194,19 @@ public class QueuePollingService {
     private static Optional<String> firstGroup(Pattern pattern, String text) {
         Matcher matcher = pattern.matcher(text);
         return matcher.find() ? Optional.of(matcher.group(1).trim()) : Optional.empty();
+    }
+
+    private static Optional<String> verdictStatus(String text) {
+        for (String line : text.split("\\R", -1)) {
+            if (line.isBlank()) {
+                return Optional.empty();
+            }
+            Matcher matcher = VERDICT_STATUS.matcher(line);
+            if (matcher.matches()) {
+                return Optional.of(matcher.group(1).trim().toUpperCase(Locale.ROOT));
+            }
+        }
+        return Optional.empty();
     }
 
     private static Optional<String> sequenceFromSkillId(String text) {

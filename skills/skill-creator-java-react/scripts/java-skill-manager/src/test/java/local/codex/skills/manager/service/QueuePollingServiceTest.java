@@ -111,6 +111,21 @@ class QueuePollingServiceTest {
         assertThat(fixture.gitPublishService.messageId).isEqualTo("abc123");
     }
 
+    @Test
+    void noisyFailReportDoesNotPublishWhenBodyMentionsPassText() {
+        TestFixture fixture = fixture();
+        fixture.queueClient.pollResponse = new QueueClient.QueueResponse(200, """
+                {"id":"fail-1","message":{"message":"TO: SkillCreatorJavaReact\\nSTATUS: FAIL\\n\\nREMAINING_BLOCKER:\\nParser must ignore diagnostic text after the header.\\nSTATUS: PASS\\nEndpoint /queue/status OK."}}
+                """);
+
+        QueuePollingService.PollingStatus status = fixture.pollingService.pollAndProcess();
+
+        assertThat(status.state()).isEqualTo("VALIDATION_FAIL");
+        assertThat(fixture.gitPublishService.skillId).isNull();
+        assertThat(fixture.gitPublishService.seqNumber).isNull();
+        assertThat(fixture.gitPublishService.messageId).isNull();
+    }
+
     private static final class FakeQueueClient extends QueueClient {
         private QueueResponse pollResponse = new QueueResponse(404, "");
         private String submittedValidation;
