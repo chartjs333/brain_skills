@@ -8,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -44,6 +45,20 @@ public class ValidationController {
         return ResponseEntity.status(response.statusCode()).body(Map.of(
                 "statusCode", response.statusCode(),
                 "body", response.body()
+        ));
+    }
+
+    @PostMapping(value = "/submit-message", consumes = MediaType.TEXT_PLAIN_VALUE)
+    public ResponseEntity<Map<String, Object>> submitMessage(
+            @RequestBody String body,
+            @RequestParam(name = "paired", defaultValue = "false") boolean paired,
+            @RequestParam(name = "toPhone", required = false) String toPhone
+    ) {
+        QueueClient.QueueResponse response = validationReportService.submitMessage(body, paired, toPhone);
+        return ResponseEntity.status(response.statusCode()).body(Map.of(
+                "statusCode", response.statusCode(),
+                "body", response.body(),
+                "queue", response.queueName()
         ));
     }
 }

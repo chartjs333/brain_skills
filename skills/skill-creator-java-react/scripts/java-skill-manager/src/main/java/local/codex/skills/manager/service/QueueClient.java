@@ -2,6 +2,7 @@ package local.codex.skills.manager.service;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -23,14 +24,25 @@ public class QueueClient {
     }
 
     public QueueResponse pollWork(boolean registerOn400) {
-        QueueResponse response = send("GET", "/work/" + properties.phone(), null, "text/plain");
+        QueueResponse response = send("GET", "/work/" + properties.phone(), null, "text/plain", "work");
         if (response.statusCode() == 400
                 && registerOn400
                 && response.body().contains("not mapped to a Git context")) {
             registerPhone();
-            return send("GET", "/work/" + properties.phone(), null, "text/plain");
+            response = send("GET", "/work/" + properties.phone(), null, "text/plain", "work");
+        }
+        if (response.statusCode() == 404) {
+            QueueResponse paired = pollPairedWork();
+            if (paired.statusCode() != 404) {
+                return paired;
+            }
         }
         return response;
+    }
+
+    private QueueResponse pollPairedWork() {
+        String phone = encoded(properties.phone());
+        return send("GET", "/worker/all/" + phone + "?to_phone=" + phone, null, "text/plain", "worker-all");
     }
 
     public QueueResponse registerPhone() {
@@ -42,15 +54,23 @@ public class QueueClient {
         String body = """
                 {"port":%d,"git_address":"%s","phone":"%s"}
                 """.formatted(port, jsonEscape(gitAddress), jsonEscape(properties.phone())).trim();
-        return send("POST", "/git-config", body, "application/json");
+        return send("POST", "/git-config", body, "application/json", "git-config");
     }
 
     public QueueResponse submitValidation(String body) {
         String jsonBody = "{\"message\":\"" + jsonEscape(body) + "\"}";
-        return send("POST", "/test/" + properties.phone(), jsonBody, "application/json");
+        return send("POST", "/test/" + properties.phone(), jsonBody, "application/json", "test");
     }
 
-    private QueueResponse send(String method, String path, String body, String contentType) {
+    public QueueResponse submitPairedValidation(String body, String toPhone) {
+        String receiver = toPhone == null || toPhone.isBlank() ? properties.phone() : toPhone;
+        String jsonBody = """
+                {"message":"%s","from_phone":"%s","to_phone":"%s"}
+                """.formatted(jsonEscape(body), jsonEscape(properties.phone()), jsonEscape(receiver)).trim();
+        return send("POST", "/tester/all/" + encoded(properties.phone()), jsonBody, "application/json", "tester-all");
+    }
+
+    private QueueResponse send(String method, String path, String body, String contentType, String queueName) {
         HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(properties.baseUrl().replaceAll("/+$", "") + path))
                 .version(HttpClient.Version.HTTP_1_1)
@@ -63,13 +83,17 @@ public class QueueClient {
         }
         try {
             HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            return new QueueResponse(response.statusCode(), response.body());
+            return new QueueResponse(response.statusCode(), response.body(), queueName);
         } catch (IOException e) {
             throw new IllegalStateException("Queue request failed: " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Queue request interrupted", e);
         }
+    }
+
+    private static String encoded(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private String resolveGitRemote() {
@@ -108,7 +132,11 @@ public class QueueClient {
         return escaped.toString();
     }
 
-    public record QueueResponse(int statusCode, String body) {
+    public record QueueResponse(int statusCode, String body, String queueName) {
+        public QueueResponse(int statusCode, String body) {
+            this(statusCode, body, "work");
+        }
+
         public boolean success() {
             return statusCode >= 200 && statusCode < 300;
         }

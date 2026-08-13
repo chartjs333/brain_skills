@@ -107,6 +107,15 @@ public class ValidationReportService {
         return queueClient.submitValidation(buildReport(skillId, messageId, reactUrl, backendUrl, cleanerActive));
     }
 
+    public QueueClient.QueueResponse submitReport(String skillId, String messageId, String reactUrl, String backendUrl, boolean cleanerActive, boolean paired, String toPhone) {
+        String report = buildReport(skillId, messageId, reactUrl, backendUrl, cleanerActive);
+        return paired ? queueClient.submitPairedValidation(report, toPhone) : queueClient.submitValidation(report);
+    }
+
+    public QueueClient.QueueResponse submitMessage(String body, boolean paired, String toPhone) {
+        return paired ? queueClient.submitPairedValidation(body, toPhone) : queueClient.submitValidation(body);
+    }
+
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
     }

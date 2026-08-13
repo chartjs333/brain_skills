@@ -75,21 +75,40 @@ class QueuePollingServiceTest {
         SkillRepository repository = new SkillRepository(properties);
         FakeQueueClient queueClient = new FakeQueueClient(properties);
         ValidationReportService validationReportService = new ValidationReportService(properties, repository, queueClient);
+        FakeGitPublishService gitPublishService = new FakeGitPublishService(properties);
         QueuePollingService pollingService = new QueuePollingService(
                 queueClient,
                 repository,
                 validationReportService,
+                gitPublishService,
                 properties,
                 new ObjectMapper()
         );
-        return new TestFixture(repository, queueClient, pollingService);
+        return new TestFixture(repository, queueClient, gitPublishService, pollingService);
     }
 
     private record TestFixture(
             SkillRepository repository,
             FakeQueueClient queueClient,
+            FakeGitPublishService gitPublishService,
             QueuePollingService pollingService
     ) {
+    }
+
+    @Test
+    void publishesGitChangesWhenValidatorPassArrives() {
+        TestFixture fixture = fixture();
+        fixture.queueClient.pollResponse = new QueueClient.QueueResponse(200, """
+                {"id":"pass-1","message":{"message":"STATUS: PASS\\n- Skill ID: skill_0002_msg_abc123_sample_parser\\n- Sequence Number: 0002\\n- Associated Message ID: abc123"}}
+                """);
+
+        QueuePollingService.PollingStatus status = fixture.pollingService.pollAndProcess();
+
+        assertThat(status.state()).isEqualTo("VALIDATION_PASS");
+        assertThat(status.detail()).contains("committed and pushed branch main");
+        assertThat(fixture.gitPublishService.skillId).isEqualTo("skill_0002_msg_abc123_sample_parser");
+        assertThat(fixture.gitPublishService.seqNumber).isEqualTo("0002");
+        assertThat(fixture.gitPublishService.messageId).isEqualTo("abc123");
     }
 
     private static final class FakeQueueClient extends QueueClient {
@@ -109,6 +128,24 @@ class QueuePollingServiceTest {
         public QueueResponse submitValidation(String body) {
             submittedValidation = body;
             return new QueueResponse(201, "queued");
+        }
+    }
+
+    private static final class FakeGitPublishService extends GitPublishService {
+        private String skillId;
+        private String seqNumber;
+        private String messageId;
+
+        private FakeGitPublishService(SkillManagerProperties properties) {
+            super(properties);
+        }
+
+        @Override
+        public PublishResult publishValidatedSkill(String skillId, String seqNumber, String messageId) {
+            this.skillId = skillId;
+            this.seqNumber = seqNumber;
+            this.messageId = messageId;
+            return new PublishResult(true, "main", "test commit", "");
         }
     }
 }

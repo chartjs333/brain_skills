@@ -16,7 +16,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class QueuePollingService {
     private static final Pattern SKILL_ID = Pattern.compile("(?im)^\\s*-?\\s*(?:Skill ID|skill_id)\\s*:\\s*`?([A-Za-z0-9_-]+)`?\\s*$");
+    private static final Pattern SKILL_ID_SEQUENCE = Pattern.compile("^skill_(\\d{4})_");
     private static final Pattern MESSAGE_ID = Pattern.compile("(?im)^\\s*-?\\s*(?:Associated Message ID|Message ID|message_id)\\s*:\\s*`?([A-Za-z0-9_-]+)`?\\s*$");
+    private static final Pattern SEQ_NUMBER = Pattern.compile("(?im)^\\s*-?\\s*(?:Sequence Number|seq_number)\\s*:\\s*`?(\\d{4})`?\\s*$");
     private static final Pattern TTL_SECONDS = Pattern.compile("(?im)^\\s*-?\\s*(?:TTL Seconds|ttl_seconds|extend_seconds|seconds)\\s*:\\s*(\\d+)\\s*$");
     private static final Pattern PROMPT_TITLE = Pattern.compile("(?im)^\\s*#\\s*Prompt\\s*:\\s*(.+?)\\s*$");
     private static final Pattern SKILL_NAME = Pattern.compile("(?im)^\\s*-?\\s*(?:Skill Name|skill_name|name)\\s*:\\s*`?\"?([^`\"\\r\\n]+)\"?`?\\s*$");
@@ -24,6 +26,7 @@ public class QueuePollingService {
     private final QueueClient queueClient;
     private final SkillRepository repository;
     private final ValidationReportService validationReportService;
+    private final GitPublishService gitPublishService;
     private final SkillManagerProperties properties;
     private final ObjectMapper objectMapper;
 
@@ -40,12 +43,14 @@ public class QueuePollingService {
             QueueClient queueClient,
             SkillRepository repository,
             ValidationReportService validationReportService,
+            GitPublishService gitPublishService,
             SkillManagerProperties properties,
             ObjectMapper objectMapper
     ) {
         this.queueClient = queueClient;
         this.repository = repository;
         this.validationReportService = validationReportService;
+        this.gitPublishService = gitPublishService;
         this.properties = properties;
         this.objectMapper = objectMapper;
     }
@@ -66,7 +71,7 @@ public class QueuePollingService {
             return update("QUEUE_ERROR", response.body(), null, response.statusCode());
         }
 
-        ParsedQueueMessage message = parseQueueMessage(response.body());
+        ParsedQueueMessage message = parseQueueMessage(response.body(), response.queueName());
         if (message.text().isBlank()) {
             return update("EMPTY_MESSAGE", response.body(), message.envelopeId().orElse(null), response.statusCode());
         }
@@ -74,7 +79,16 @@ public class QueuePollingService {
         String text = message.text();
         String upper = text.toUpperCase();
         if (upper.contains("STATUS: PASS")) {
-            return update("VALIDATION_PASS", "Validator PASS received.", message.envelopeId().orElse(null), response.statusCode());
+            try {
+                GitPublishService.PublishResult publish = gitPublishService.publishValidatedSkill(
+                        firstGroup(SKILL_ID, text).orElse("unknown_skill"),
+                        firstGroup(SEQ_NUMBER, text).or(() -> sequenceFromSkillId(text)).orElse("unknown_seq"),
+                        firstGroup(MESSAGE_ID, text).or(() -> message.envelopeId()).orElse("unknown_msg")
+                );
+                return update("VALIDATION_PASS", "Validator PASS received; " + publish.summary(), message.envelopeId().orElse(null), response.statusCode());
+            } catch (RuntimeException e) {
+                return update("VALIDATION_PASS_PUBLISH_FAILED", "Validator PASS received; git publish failed: " + e.getMessage(), message.envelopeId().orElse(null), response.statusCode());
+            }
         }
         if (upper.contains("STATUS: FAIL")) {
             return update("VALIDATION_FAIL", "Validator FAIL received; manual code changes may be required.", message.envelopeId().orElse(null), response.statusCode());
@@ -86,7 +100,9 @@ public class QueuePollingService {
                     skill.messageId(),
                     properties.reactUrl(),
                     properties.backendUrl(),
-                    true
+                    true,
+                    message.validationPaired(),
+                    message.replyToPhone().orElse(null)
             );
             return update(
                     "TTL_EXTENDED",
@@ -102,7 +118,9 @@ public class QueuePollingService {
                 skill.messageId(),
                 properties.reactUrl(),
                 properties.backendUrl(),
-                true
+                true,
+                message.validationPaired(),
+                message.replyToPhone().orElse(null)
         );
         return update(
                 "SKILL_CREATED",
@@ -140,17 +158,23 @@ public class QueuePollingService {
         return repository.create(new CreateSkillRequest(messageId, skillName, text, null, ttlSeconds));
     }
 
-    private ParsedQueueMessage parseQueueMessage(String body) {
+    private ParsedQueueMessage parseQueueMessage(String body, String responseQueueName) {
         try {
             JsonNode root = objectMapper.readTree(body);
             Optional<String> envelopeId = textValue(root.path("id"));
+            Optional<String> fromPhone = textValue(root.path("from_phone"))
+                    .or(() -> textValue(root.at("/metadata/from_phone")));
+            Optional<String> queueName = textValue(root.path("queue"))
+                    .or(() -> textValue(root.at("/metadata/phone_channel")))
+                    .or(() -> Optional.ofNullable(responseQueueName));
+            boolean paired = queueName.map("worker-all"::equals).orElse(false);
             JsonNode message = root.path("message");
             if (message.isObject()) {
-                return new ParsedQueueMessage(textValue(message.path("message")).orElse(message.toString()), envelopeId);
+                return new ParsedQueueMessage(textValue(message.path("message")).orElse(message.toString()), envelopeId, paired, fromPhone);
             }
-            return new ParsedQueueMessage(textValue(message).orElse(root.toString()), envelopeId);
+            return new ParsedQueueMessage(textValue(message).orElse(root.toString()), envelopeId, paired, fromPhone);
         } catch (Exception ignored) {
-            return new ParsedQueueMessage(body, Optional.empty());
+            return new ParsedQueueMessage(body, Optional.empty(), false, Optional.empty());
         }
     }
 
@@ -167,6 +191,13 @@ public class QueuePollingService {
     private static Optional<String> firstGroup(Pattern pattern, String text) {
         Matcher matcher = pattern.matcher(text);
         return matcher.find() ? Optional.of(matcher.group(1).trim()) : Optional.empty();
+    }
+
+    private static Optional<String> sequenceFromSkillId(String text) {
+        return firstGroup(SKILL_ID, text).flatMap(skillId -> {
+            Matcher matcher = SKILL_ID_SEQUENCE.matcher(skillId);
+            return matcher.find() ? Optional.of(matcher.group(1)) : Optional.empty();
+        });
     }
 
     private String normalizeMessageId(String value) {
@@ -186,7 +217,7 @@ public class QueuePollingService {
         return updated;
     }
 
-    private record ParsedQueueMessage(String text, Optional<String> envelopeId) {
+    private record ParsedQueueMessage(String text, Optional<String> envelopeId, boolean validationPaired, Optional<String> replyToPhone) {
     }
 
     public record PollingStatus(
