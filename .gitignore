@@ -8,6 +8,10 @@ target/
 node_modules/
 dist/
 
+# Runtime skill library storage
+skills/originals/
+skills/variations/
+
 # BlueJ files
 *.ctxt
 

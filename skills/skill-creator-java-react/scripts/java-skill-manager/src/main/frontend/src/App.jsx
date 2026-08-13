@@ -103,6 +103,7 @@ export default function App() {
 
   async function uploadOriginals(event) {
     event.preventDefault();
+    const form = event.currentTarget;
     if (!files.length) {
       setError("Select at least one .md file.");
       return;
@@ -114,7 +115,7 @@ export default function App() {
       setError("");
       const uploaded = await readJson(await fetch("/api/v1/original-skills", { method: "POST", body: formData }));
       setFiles([]);
-      event.currentTarget.reset();
+      form.reset();
       await refreshOriginals(uploaded[0]?.originalId);
     } catch (err) {
       setError(err.message);

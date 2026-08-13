@@ -129,14 +129,15 @@ public class OriginalSkillLibraryService {
     public synchronized VariationGenerationResult generateVariations(String originalId, GenerateVariationsRequest request) {
         OriginalSkillDetail original = getOriginal(originalId);
         GenerationOptions options = GenerationOptions.from(request);
-        List<VariationDraft> drafts = new ArrayList<>(generateWithAi(original, options)
-                .filter(list -> !list.isEmpty())
-                .orElseGet(() -> fallbackDrafts(original, options)));
+        List<VariationDraft> drafts = generateWithAi(original, options)
+                .filter(list -> list.size() >= options.count())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "AI variation generation required but LLM returned no complete variation set"
+                ));
         boolean aiUsed = drafts.stream().anyMatch(VariationDraft::aiGenerated);
-        if (drafts.size() < options.count()) {
-            drafts.addAll(fallbackDrafts(original, options).stream()
-                    .limit(options.count() - drafts.size())
-                    .toList());
+        if (!aiUsed) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI variation generation required but no AI-generated drafts were returned");
         }
         Path dir = variationDirectory(original.originalId());
         try {

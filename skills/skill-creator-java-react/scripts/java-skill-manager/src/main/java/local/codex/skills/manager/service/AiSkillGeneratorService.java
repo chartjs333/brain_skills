@@ -22,16 +22,23 @@ public class AiSkillGeneratorService {
         if (completion.isEmpty() || completion.get().isBlank()) {
             return Optional.empty();
         }
-        return parseJson(completion.get()).map(json -> toContent(json, request));
+        return parseJson(completion.get()).flatMap(json -> toContent(json, request));
     }
 
-    private GeneratedSkillContent toContent(JsonNode json, GenerationRequest request) {
-        return new GeneratedSkillContent(
-                markdownBody(textValue(json.path("skill_markdown_body")).orElse(""), request),
-                validJavaService(textValue(json.path("java_service")).orElse(""), request).orElse(null),
-                validJavaController(textValue(json.path("java_controller")).orElse(""), request).orElse(null),
-                validReactComponent(textValue(json.path("react_component")).orElse(""), request).orElse(null)
-        );
+    private Optional<GeneratedSkillContent> toContent(JsonNode json, GenerationRequest request) {
+        String markdown = markdownBody(textValue(json.path("skill_markdown_body")).orElse(""), request);
+        Optional<String> javaService = validJavaService(textValue(json.path("java_service")).orElse(""), request);
+        Optional<String> javaController = validJavaController(textValue(json.path("java_controller")).orElse(""), request);
+        Optional<String> reactComponent = validReactComponent(textValue(json.path("react_component")).orElse(""), request);
+        if (markdown.isBlank() || javaService.isEmpty() || javaController.isEmpty() || reactComponent.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new GeneratedSkillContent(
+                markdown,
+                javaService.orElseThrow(),
+                javaController.orElseThrow(),
+                reactComponent.orElseThrow()
+        ));
     }
 
     private Optional<JsonNode> parseJson(String text) {

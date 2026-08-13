@@ -54,7 +54,7 @@ public class SkillRepository {
             long ttlSeconds = request.ttlSeconds() == null ? properties.defaultTtlSeconds() : request.ttlSeconds();
             Instant expiresAt = createdAt.plusSeconds(ttlSeconds);
             String classBase = classBase(seq, request.messageId());
-            GeneratedSkillContent generatedContent = generateWithLlm(
+            Optional<GeneratedSkillContent> generated = generateWithLlm(
                     skillId,
                     seq,
                     request.messageId(),
@@ -64,7 +64,11 @@ public class SkillRepository {
                     createdAt,
                     expiresAt,
                     request.requestText()
-            ).orElse(null);
+            );
+            if (aiGeneratorService != null && generated.isEmpty()) {
+                throw new IllegalStateException("AI skill generation required but LLM returned no complete valid skill_markdown_body, java_service, java_controller, and react_component artifacts");
+            }
+            GeneratedSkillContent generatedContent = generated.orElse(null);
             Files.createDirectories(skillDir);
             String markdown = renderSkillMarkdown(
                     skillId,
