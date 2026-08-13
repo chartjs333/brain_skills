@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Validator Java"
+  short_description: "Audit Java skills, TTL, queues, and live routes"
+  default_prompt: "Use $skill-validator-java to audit a generated Java skill for identity, TTL, runtime, and queue compliance."

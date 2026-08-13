@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Creator Java React"
+  short_description: "Queue-driven Java/React skill TTL manager"
+  default_prompt: "Use $skill-creator-java-react to process skill queue work, generate Codex skill specs, and manage TTL validation."
