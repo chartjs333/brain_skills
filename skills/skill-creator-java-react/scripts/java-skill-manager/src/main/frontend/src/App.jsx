@@ -54,13 +54,18 @@ export default function App() {
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [runtime, setRuntime] = useState(null);
 
   const activeOriginal = useMemo(
     () => originals.find((original) => original.originalId === activeOriginalId) || null,
     [originals, activeOriginalId],
   );
+  const llmDisabled = runtime?.llmEnabled === false;
+  const runtimeStatusLabel = runtime ? (llmDisabled ? "AI disabled" : "AI enabled") : "AI status unknown";
+  const runtimeStatusClass = runtime ? (llmDisabled ? "status-badge off" : "status-badge") : "status-badge muted";
 
   useEffect(() => {
+    refreshRuntime();
     refreshOriginals();
   }, []);
 
@@ -83,6 +88,15 @@ export default function App() {
       setActiveOriginalId(chosen);
     } catch (err) {
       setError(err.message);
+    }
+  }
+
+  async function refreshRuntime() {
+    try {
+      const status = await readJson(await fetch("/api/v1/runtime/status"));
+      setRuntime(status);
+    } catch {
+      setRuntime(null);
     }
   }
 
@@ -126,6 +140,10 @@ export default function App() {
 
   async function generateVariations() {
     if (!activeOriginalId) {
+      return;
+    }
+    if (llmDisabled) {
+      setError("AI generation is disabled for this backend session.");
       return;
     }
     try {
@@ -251,7 +269,10 @@ export default function App() {
           <pre className="markdown-preview">{originalDetail?.content || "Select or upload an original markdown skill."}</pre>
 
           <div className="generator">
-            <h2>Generation</h2>
+            <div className="generator-head">
+              <h2>Generation</h2>
+              <span className={runtimeStatusClass}>{runtimeStatusLabel}</span>
+            </div>
             <div className="controls">
               <label>
                 <span>Count</span>
@@ -303,7 +324,7 @@ export default function App() {
                 <span>Avoid existing names</span>
               </label>
             </div>
-            <button type="button" disabled={busy || !activeOriginalId} onClick={generateVariations}>
+            <button type="button" disabled={busy || !activeOriginalId || llmDisabled} onClick={generateVariations}>
               {busy ? "Working" : "Generate"}
             </button>
           </div>

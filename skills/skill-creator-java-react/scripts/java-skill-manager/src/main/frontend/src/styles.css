@@ -249,6 +249,36 @@ input[type="range"] {
   padding-top: 16px;
 }
 
+.generator-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.status-badge {
+  background: #e8f2ee;
+  border: 1px solid #c7ded5;
+  border-radius: 999px;
+  color: #195b48;
+  font-size: 0.78rem;
+  font-weight: 800;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.status-badge.off {
+  background: #fff7d6;
+  border-color: #d8b94f;
+  color: #735f11;
+}
+
+.status-badge.muted {
+  background: #edf1f5;
+  border-color: #d5dbe3;
+  color: #5d6672;
+}
+
 .controls {
   display: grid;
   gap: 10px;
