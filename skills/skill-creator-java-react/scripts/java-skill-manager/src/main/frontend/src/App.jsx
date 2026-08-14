@@ -60,9 +60,9 @@ export default function App() {
     () => originals.find((original) => original.originalId === activeOriginalId) || null,
     [originals, activeOriginalId],
   );
-  const llmDisabled = runtime?.llmEnabled === false;
-  const runtimeStatusLabel = runtime ? (llmDisabled ? "AI disabled" : "AI enabled") : "AI status unknown";
-  const runtimeStatusClass = runtime ? (llmDisabled ? "status-badge off" : "status-badge") : "status-badge muted";
+  const canGenerateWithAi = runtime?.llmEnabled === true;
+  const runtimeStatusLabel = runtime ? (canGenerateWithAi ? "AI enabled" : "AI disabled") : "AI status unknown";
+  const runtimeStatusClass = runtime ? (canGenerateWithAi ? "status-badge" : "status-badge off") : "status-badge muted";
 
   useEffect(() => {
     refreshRuntime();
@@ -142,8 +142,8 @@ export default function App() {
     if (!activeOriginalId) {
       return;
     }
-    if (llmDisabled) {
-      setError("AI generation is disabled for this backend session.");
+    if (!canGenerateWithAi) {
+      setError(runtime ? "AI generation is disabled for this backend session." : "AI status is unavailable; generation is blocked.");
       return;
     }
     try {
@@ -324,7 +324,7 @@ export default function App() {
                 <span>Avoid existing names</span>
               </label>
             </div>
-            <button type="button" disabled={busy || !activeOriginalId || llmDisabled} onClick={generateVariations}>
+            <button type="button" disabled={busy || !activeOriginalId || !canGenerateWithAi} onClick={generateVariations}>
               {busy ? "Working" : "Generate"}
             </button>
           </div>
