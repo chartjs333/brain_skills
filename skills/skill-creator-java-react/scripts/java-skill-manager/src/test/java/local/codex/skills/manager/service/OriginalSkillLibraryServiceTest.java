@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import local.codex.skills.manager.SkillManagerProperties;
 import local.codex.skills.manager.model.GenerateVariationsRequest;
 import local.codex.skills.manager.model.OriginalSkillSummary;
+import local.codex.skills.manager.model.SkillVariationDetail;
 import local.codex.skills.manager.model.VariationGenerationResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -88,6 +89,44 @@ class OriginalSkillLibraryServiceTest {
     }
 
     @Test
+    void acceptsCommonLlmJsonAliasesForVariations() {
+        OriginalSkillLibraryService service = service("""
+                ```json
+                {"variations":[
+                  {"file_name":"onset-normalizer.md","skill_name":"onset-normalizer","short_description":"Normalize onset ages.","rationale":"Converts onset logic into a normalization skill.","skill_markdown_body":"# Onset Normalizer\\n\\n## Workflow\\n\\nNormalize onset ages."},
+                  {"filename":"duration-extractor.md","title":"duration-extractor","description":"Extract duration.","changes":"Focuses on symptom duration.","markdown":"# Duration Extractor\\n\\n## Workflow\\n\\nExtract movement disorder duration."},
+                  {"fileName":"progression-pattern.md","name":"progression-pattern","description":"Track progression.","difference":"Focuses on progression patterns.","body":"# Progression Pattern\\n\\n## Workflow\\n\\nTrack progression over time."}
+                ]}
+                ```
+                """);
+        MockMultipartFile upload = new MockMultipartFile(
+                "files",
+                "movement-disorder.md",
+                "text/markdown",
+                "# Movement Disorder\n\nExtract onset age.".getBytes(StandardCharsets.UTF_8)
+        );
+        String originalId = service.upload(List.of(upload)).get(0).originalId();
+
+        VariationGenerationResult result = service.generateVariations(originalId, new GenerateVariationsRequest(
+                3,
+                "related specializations",
+                0.65,
+                "same as original",
+                "moderate",
+                "",
+                true
+        ));
+
+        assertThat(result.aiUsed()).isTrue();
+        assertThat(result.variations())
+                .extracting(SkillVariationDetail::fileName)
+                .containsExactlyInAnyOrder("onset-normalizer.md", "duration-extractor.md", "progression-pattern.md");
+        assertThat(result.variations())
+                .extracting(SkillVariationDetail::content)
+                .allMatch(content -> content.contains("source_original_id: \"" + originalId + "\""));
+    }
+
+    @Test
     void rejectsVariationGenerationWhenLlmReturnsNoDrafts() {
         OriginalSkillLibraryService service = service("");
         MockMultipartFile upload = new MockMultipartFile(
@@ -108,7 +147,8 @@ class OriginalSkillLibraryServiceTest {
                 true
         )))
                 .isInstanceOf(ResponseStatusException.class)
-                .hasMessageContaining("AI variation generation required");
+                .hasMessageContaining("AI variation generation required")
+                .hasMessageContaining("fake LLM returned no text");
     }
 
     private OriginalSkillLibraryService service(String response) {
@@ -122,7 +162,9 @@ class OriginalSkillLibraryServiceTest {
                 false,
                 60000,
                 "http://localhost:8080",
-                "http://localhost:5173"
+                "http://localhost:5173",
+                true,
+                true
         );
         return new OriginalSkillLibraryService(properties, new FakeLlmService(response), new ObjectMapper());
     }
@@ -131,13 +173,20 @@ class OriginalSkillLibraryServiceTest {
         private final String response;
 
         private FakeLlmService(String response) {
-            super(HttpClient.newHttpClient(), null, new ObjectMapper());
+            super(HttpClient.newHttpClient(), null, new ObjectMapper(), null);
             this.response = response;
         }
 
         @Override
         public Optional<String> complete(String systemPrompt, String userPrompt) {
             return response == null || response.isBlank() ? Optional.empty() : Optional.of(response);
+        }
+
+        @Override
+        public CompletionResult completeDetailed(String systemPrompt, String userPrompt) {
+            return response == null || response.isBlank()
+                    ? new CompletionResult(Optional.empty(), "fake LLM returned no text")
+                    : new CompletionResult(Optional.of(response), "fake LLM returned text");
         }
     }
 }

@@ -7,11 +7,13 @@ record LlmSettings(
         URI baseUri,
         String apiKey,
         String primaryModel,
-        String fallbackModel
+        String fallbackModel,
+        String defaultModel
 ) {
     static Optional<LlmSettings> from(EnvFileLoader envFileLoader) {
         Optional<String> baseUri = envFileLoader.first("LLM_BASE_URI", "LLM_BASE_URL");
-        Optional<String> primaryModel = envFileLoader.first("LLM_PRIMARY_MODEL", "LLM_DEFAULT_MODEL");
+        Optional<String> defaultModel = envFileLoader.first("LLM_DEFAULT_MODEL");
+        Optional<String> primaryModel = envFileLoader.first("LLM_PRIMARY_MODEL", "LLM_MODEL", "LLM_DEFAULT_MODEL");
         Optional<String> fallbackModel = envFileLoader.first("LLM_FALLBACK_MODEL");
         if (baseUri.isEmpty() || primaryModel.isEmpty()) {
             return Optional.empty();
@@ -20,7 +22,8 @@ record LlmSettings(
                 URI.create(baseUri.get()),
                 envFileLoader.first("LLM_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY").orElse(""),
                 primaryModel.get(),
-                fallbackModel.orElse("")
+                fallbackModel.orElse(""),
+                defaultModel.orElse("")
         ));
     }
 

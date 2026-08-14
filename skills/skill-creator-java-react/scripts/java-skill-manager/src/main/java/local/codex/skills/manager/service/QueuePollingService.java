@@ -65,6 +65,14 @@ public class QueuePollingService {
     }
 
     public synchronized PollingStatus pollAndProcess() {
+        if (Boolean.FALSE.equals(properties.queueProcessingEnabled())) {
+            return update(
+                    "QUEUE_PROCESSING_DISABLED",
+                    "Queue processing is disabled by skill.manager.queue-processing-enabled=false.",
+                    null,
+                    null
+            );
+        }
         QueueClient.QueueResponse response = queueClient.pollWork(true);
         if (response.statusCode() == 404) {
             return update("QUEUE_EMPTY", "No work is currently queued for phone " + properties.phone(), null, response.statusCode());
@@ -227,7 +235,7 @@ public class QueuePollingService {
         return slug.isBlank() ? "untitled" : slug;
     }
 
-    private PollingStatus update(String state, String detail, String messageId, int httpStatus) {
+    private PollingStatus update(String state, String detail, String messageId, Integer httpStatus) {
         PollingStatus updated = new PollingStatus(Instant.now(), status.pollCount() + 1, state, detail, messageId, httpStatus);
         status = updated;
         return updated;

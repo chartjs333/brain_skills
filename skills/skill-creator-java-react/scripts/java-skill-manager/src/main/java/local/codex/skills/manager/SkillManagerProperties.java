@@ -16,7 +16,9 @@ public record SkillManagerProperties(
         boolean queuePollingEnabled,
         long queuePollFixedDelayMillis,
         String backendUrl,
-        String reactUrl
+        String reactUrl,
+        Boolean llmEnabled,
+        Boolean queueProcessingEnabled
 ) {
     public SkillManagerProperties {
         if (baseUrl == null || baseUrl.isBlank()) {
@@ -45,6 +47,12 @@ public record SkillManagerProperties(
         }
         if (reactUrl == null || reactUrl.isBlank()) {
             reactUrl = "http://localhost:5173";
+        }
+        if (llmEnabled == null) {
+            llmEnabled = true;
+        }
+        if (queueProcessingEnabled == null) {
+            queueProcessingEnabled = true;
         }
     }
 

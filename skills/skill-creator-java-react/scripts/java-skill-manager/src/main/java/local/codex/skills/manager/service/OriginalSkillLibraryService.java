@@ -129,11 +129,12 @@ public class OriginalSkillLibraryService {
     public synchronized VariationGenerationResult generateVariations(String originalId, GenerateVariationsRequest request) {
         OriginalSkillDetail original = getOriginal(originalId);
         GenerationOptions options = GenerationOptions.from(request);
-        List<VariationDraft> drafts = generateWithAi(original, options)
+        AiDraftResult aiResult = generateWithAi(original, options);
+        List<VariationDraft> drafts = aiResult.drafts()
                 .filter(list -> list.size() >= options.count())
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.BAD_GATEWAY,
-                        "AI variation generation required but LLM returned no complete variation set"
+                        "AI variation generation required but LLM returned no complete variation set. " + aiResult.diagnostic(options.count())
                 ));
         boolean aiUsed = drafts.stream().anyMatch(VariationDraft::aiGenerated);
         if (!aiUsed) {
@@ -225,11 +226,12 @@ public class OriginalSkillLibraryService {
         }
     }
 
-    private Optional<List<VariationDraft>> generateWithAi(OriginalSkillDetail original, GenerationOptions options) {
+    private AiDraftResult generateWithAi(OriginalSkillDetail original, GenerationOptions options) {
         String systemPrompt = """
                 You generate Codex SKILL.md files. Return strict JSON only, with a top-level "variations" array.
                 Each item must include fileName, name, description, difference, and content.
                 The content must be a complete standalone Markdown skill that preserves the source concept while changing specialization, audience, workflow, or scenario.
+                Keep each generated SKILL.md concise but complete, ideally 120-180 words, so the full JSON set fits in one response.
                 Do not mechanically rewrite the original. Do not combine unrelated source skills.
                 """;
         String userPrompt = """
@@ -257,7 +259,9 @@ public class OriginalSkillLibraryService {
                 options.avoidExisting(),
                 clip(original.content(), 18000)
         );
-        return llmService.complete(systemPrompt, userPrompt).flatMap(this::parseAiDrafts);
+        LlmService.CompletionResult completion = llmService.completeDetailed(systemPrompt, userPrompt);
+        Optional<List<VariationDraft>> drafts = completion.text().flatMap(this::parseAiDrafts);
+        return new AiDraftResult(drafts, completion.diagnostic());
     }
 
     private Optional<List<VariationDraft>> parseAiDrafts(String raw) {
@@ -269,11 +273,11 @@ public class OriginalSkillLibraryService {
             }
             List<VariationDraft> drafts = new ArrayList<>();
             for (JsonNode node : array) {
-                String name = text(node, "name").orElse("Related Skill");
-                String fileName = text(node, "fileName").orElse(slugify(name) + ".md");
-                String description = text(node, "description").orElse("AI-generated related skill.");
-                String difference = text(node, "difference").orElse("Creative specialization generated from the original skill.");
-                String content = text(node, "content").orElse("");
+                String name = textAny(node, "name", "skillName", "skill_name", "title").orElse("Related Skill");
+                String fileName = textAny(node, "fileName", "file_name", "filename").orElse(slugify(name) + ".md");
+                String description = textAny(node, "description", "shortDescription", "short_description").orElse("AI-generated related skill.");
+                String difference = textAny(node, "difference", "rationale", "changes", "change_summary").orElse("Creative specialization generated from the original skill.");
+                String content = textAny(node, "content", "markdown", "skillMarkdown", "skill_markdown", "skill_markdown_body", "body", "skill").orElse("");
                 if (!content.isBlank()) {
                     drafts.add(new VariationDraft(fileName, name, description, difference, content, true));
                 }
@@ -645,6 +649,16 @@ public class OriginalSkillLibraryService {
         return Optional.of(value.asText()).filter(text -> !text.isBlank());
     }
 
+    private static Optional<String> textAny(JsonNode node, String... fields) {
+        for (String field : fields) {
+            Optional<String> value = text(node, field);
+            if (value.isPresent()) {
+                return value;
+            }
+        }
+        return Optional.empty();
+    }
+
     private static Optional<Instant> parseInstant(String value) {
         try {
             return value == null || value.isBlank() ? Optional.empty() : Optional.of(Instant.parse(value));
@@ -776,5 +790,14 @@ public class OriginalSkillLibraryService {
             String content,
             boolean aiGenerated
     ) {
+    }
+
+    private record AiDraftResult(Optional<List<VariationDraft>> drafts, String completionDiagnostic) {
+        String diagnostic(int requestedCount) {
+            if (drafts.isPresent()) {
+                return "Parsed " + drafts.get().size() + " complete draft(s), requested " + requestedCount + ". " + completionDiagnostic;
+            }
+            return completionDiagnostic == null || completionDiagnostic.isBlank() ? "No LLM diagnostic available." : completionDiagnostic;
+        }
     }
 }

@@ -135,7 +135,7 @@ public class SkillRepository {
     public synchronized List<GeneratedSkill> deleteExpired(Instant now) {
         List<GeneratedSkill> removed = new ArrayList<>();
         for (GeneratedSkill skill : findAll()) {
-            if (skill.expiredAt(now)) {
+            if (skill.expiredAt(now) && !isTrackedSkill(skill.directory())) {
                 deleteDirectory(skill.directory());
                 removed.add(skill);
             }
@@ -506,6 +506,31 @@ public class SkillRepository {
         Path target = path.toAbsolutePath().normalize();
         if (!target.startsWith(root)) {
             throw new IllegalArgumentException("Refusing to access path outside skills root: " + target);
+        }
+    }
+
+    private boolean isTrackedSkill(Path skillDir) {
+        Path repoRoot = properties.repoRoot().toAbsolutePath().normalize();
+        Path skillMd = skillDir.resolve("SKILL.md").toAbsolutePath().normalize();
+        if (!Files.isDirectory(repoRoot.resolve(".git")) || !skillMd.startsWith(repoRoot)) {
+            return false;
+        }
+        String relative = repoRoot.relativize(skillMd).toString().replace('\\', '/');
+        ProcessBuilder processBuilder = new ProcessBuilder("git", "-C", repoRoot.toString(), "ls-files", "--error-unmatch", "--", relative);
+        processBuilder.redirectErrorStream(true);
+        try {
+            Process process = processBuilder.start();
+            boolean completed = process.waitFor(5, java.util.concurrent.TimeUnit.SECONDS);
+            if (!completed) {
+                process.destroyForcibly();
+                return true;
+            }
+            return process.exitValue() == 0;
+        } catch (IOException e) {
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return true;
         }
     }
 

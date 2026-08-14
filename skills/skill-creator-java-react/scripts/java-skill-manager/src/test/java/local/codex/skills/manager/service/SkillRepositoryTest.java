@@ -31,7 +31,9 @@ class SkillRepositoryTest {
                 false,
                 60000,
                 "http://localhost:8080",
-                "http://localhost:5173"
+                "http://localhost:5173",
+                true,
+                true
         ));
 
         GeneratedSkill created = repository.create(new CreateSkillRequest(
@@ -64,6 +66,71 @@ class SkillRepositoryTest {
     }
 
     @Test
+    void doesNotDeleteExpiredGeneratedSkillTrackedByGit() throws Exception {
+        Path skillsRoot = tempDir.resolve("skills");
+        SkillRepository repository = new SkillRepository(new SkillManagerProperties(
+                "http://localhost:8025",
+                "9301",
+                tempDir,
+                skillsRoot,
+                3600,
+                1000,
+                false,
+                60000,
+                "http://localhost:8080",
+                "http://localhost:5173",
+                true,
+                true
+        ));
+        runGit(tempDir, "init");
+
+        GeneratedSkill created = repository.create(new CreateSkillRequest(
+                "msg_2042",
+                "tracked_skill",
+                "Create a tracked generated skill.",
+                null,
+                1L
+        ));
+        runGit(tempDir, "add", tempDir.relativize(created.directory()).toString());
+
+        assertThat(repository.deleteExpired(Instant.now().plusSeconds(3600))).isEmpty();
+        assertThat(Files.exists(created.directory().resolve("SKILL.md"))).isTrue();
+    }
+
+    @Test
+    void deletesExpiredGeneratedSkillNotTrackedByGit() throws Exception {
+        Path skillsRoot = tempDir.resolve("skills");
+        SkillRepository repository = new SkillRepository(new SkillManagerProperties(
+                "http://localhost:8025",
+                "9301",
+                tempDir,
+                skillsRoot,
+                3600,
+                1000,
+                false,
+                60000,
+                "http://localhost:8080",
+                "http://localhost:5173",
+                true,
+                true
+        ));
+        runGit(tempDir, "init");
+
+        GeneratedSkill created = repository.create(new CreateSkillRequest(
+                "msg_3042",
+                "untracked_skill",
+                "Create an untracked generated skill.",
+                null,
+                1L
+        ));
+
+        assertThat(repository.deleteExpired(Instant.now().plusSeconds(3600)))
+                .extracting(GeneratedSkill::skillId)
+                .containsExactly(created.skillId());
+        assertThat(Files.exists(created.directory().resolve("SKILL.md"))).isFalse();
+    }
+
+    @Test
     void rejectsSkillCreationWhenAiGeneratorReturnsNoCompleteArtifacts() {
         SkillRepository repository = new SkillRepository(new SkillManagerProperties(
                 "http://localhost:8025",
@@ -75,7 +142,9 @@ class SkillRepositoryTest {
                 false,
                 60000,
                 "http://localhost:8080",
-                "http://localhost:5173"
+                "http://localhost:5173",
+                true,
+                true
         ), new EmptyAiSkillGeneratorService());
 
         assertThatThrownBy(() -> repository.create(new CreateSkillRequest(
@@ -98,5 +167,20 @@ class SkillRepositoryTest {
         public Optional<GeneratedSkillContent> generate(GenerationRequest request) {
             return Optional.empty();
         }
+    }
+
+    private static void runGit(Path directory, String... args) throws Exception {
+        String[] command = new String[args.length + 1];
+        command[0] = "git";
+        System.arraycopy(args, 0, command, 1, args.length);
+        ProcessBuilder processBuilder = new ProcessBuilder(command);
+        processBuilder.directory(directory.toFile());
+        processBuilder.redirectErrorStream(true);
+        Process process = processBuilder.start();
+        byte[] output = process.getInputStream().readAllBytes();
+        int exitCode = process.waitFor();
+        assertThat(exitCode)
+                .as("git %s output: %s", String.join(" ", args), new String(output))
+                .isZero();
     }
 }

@@ -18,7 +18,7 @@ class QueuePollingServiceTest {
 
     @Test
     void createsSkillFromQueuedPromptAndSubmitsValidationReport() {
-        TestFixture fixture = fixture();
+        TestFixture fixture = fixture(true);
         fixture.queueClient.pollResponse = new QueueClient.QueueResponse(200, """
                 {"id":"abc123","message":{"message":"# Prompt: Sample Parser\\nTTL Seconds: 120\\nCreate a focused parser skill."}}
                 """);
@@ -37,7 +37,7 @@ class QueuePollingServiceTest {
 
     @Test
     void extendsTtlFromQueuedActionAndSubmitsValidationReport() {
-        TestFixture fixture = fixture();
+        TestFixture fixture = fixture(true);
         GeneratedSkill created = fixture.repository.create(new CreateSkillRequest(
                 "msg_2000",
                 "sample_parser",
@@ -59,7 +59,7 @@ class QueuePollingServiceTest {
                 .contains("TTL Seconds: 180");
     }
 
-    private TestFixture fixture() {
+    private TestFixture fixture(boolean queueProcessingEnabled) {
         SkillManagerProperties properties = new SkillManagerProperties(
                 "http://localhost:8025",
                 "9301",
@@ -70,8 +70,14 @@ class QueuePollingServiceTest {
                 false,
                 60000,
                 "http://localhost:8082",
-                "http://localhost:5176"
+                "http://localhost:5176",
+                true,
+                queueProcessingEnabled
         );
+        return fixture(properties);
+    }
+
+    private TestFixture fixture(SkillManagerProperties properties) {
         SkillRepository repository = new SkillRepository(properties);
         FakeQueueClient queueClient = new FakeQueueClient(properties);
         ValidationReportService validationReportService = new ValidationReportService(properties, repository, queueClient);
@@ -87,6 +93,21 @@ class QueuePollingServiceTest {
         return new TestFixture(repository, queueClient, gitPublishService, pollingService);
     }
 
+    @Test
+    void doesNotPollWhenQueueProcessingIsDisabled() {
+        TestFixture fixture = fixture(false);
+        fixture.queueClient.pollResponse = new QueueClient.QueueResponse(200, """
+                {"id":"abc123","message":{"message":"# Prompt: Sample Parser\\nCreate a focused parser skill."}}
+                """);
+
+        QueuePollingService.PollingStatus status = fixture.pollingService.pollAndProcess();
+
+        assertThat(status.state()).isEqualTo("QUEUE_PROCESSING_DISABLED");
+        assertThat(status.httpStatus()).isNull();
+        assertThat(fixture.repository.findAll()).isEmpty();
+        assertThat(fixture.queueClient.pollCalled).isFalse();
+    }
+
     private record TestFixture(
             SkillRepository repository,
             FakeQueueClient queueClient,
@@ -97,7 +118,7 @@ class QueuePollingServiceTest {
 
     @Test
     void publishesGitChangesWhenValidatorPassArrives() {
-        TestFixture fixture = fixture();
+        TestFixture fixture = fixture(true);
         fixture.queueClient.pollResponse = new QueueClient.QueueResponse(200, """
                 {"id":"pass-1","message":{"message":"STATUS: PASS\\n- Skill ID: skill_0002_msg_abc123_sample_parser\\n- Sequence Number: 0002\\n- Associated Message ID: abc123"}}
                 """);
@@ -113,7 +134,7 @@ class QueuePollingServiceTest {
 
     @Test
     void noisyFailReportDoesNotPublishWhenBodyMentionsPassText() {
-        TestFixture fixture = fixture();
+        TestFixture fixture = fixture(true);
         fixture.queueClient.pollResponse = new QueueClient.QueueResponse(200, """
                 {"id":"fail-1","message":{"message":"TO: SkillCreatorJavaReact\\nSTATUS: FAIL\\n\\nREMAINING_BLOCKER:\\nParser must ignore diagnostic text after the header.\\nSTATUS: PASS\\nEndpoint /queue/status OK."}}
                 """);
@@ -129,6 +150,7 @@ class QueuePollingServiceTest {
     private static final class FakeQueueClient extends QueueClient {
         private QueueResponse pollResponse = new QueueResponse(404, "");
         private String submittedValidation;
+        private boolean pollCalled;
 
         private FakeQueueClient(SkillManagerProperties properties) {
             super(HttpClient.newHttpClient(), properties);
@@ -136,6 +158,7 @@ class QueuePollingServiceTest {
 
         @Override
         public QueueResponse pollWork(boolean registerOn400) {
+            pollCalled = true;
             return pollResponse;
         }
 
